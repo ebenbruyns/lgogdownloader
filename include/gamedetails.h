@@ -27,8 +27,10 @@ class gameDetails
         std::vector<gameFile> languagepacks;
         std::vector<gameDetails> dlcs;
         std::string gamename;
+        std::string gamename_basegame;
         std::string product_id;
         std::string title;
+        std::string title_basegame;
         std::string icon;
         std::string serials;
         std::string changelog;
@@ -47,10 +49,12 @@ class gameDetails
         std::vector<gameFile> getGameFileVector();
         std::vector<gameFile> getGameFileVectorFiltered(const unsigned int& iType);
         void filterWithType(const unsigned int& iType);
+        std::string makeCustomFilepath(const std::string& filename, const gameDetails& gd, const DirectoryConfig& dirConf);
         virtual ~gameDetails();
     protected:
         void filterListWithPriorities(std::vector<gameFile>& list, const gameSpecificConfig& config);
         void filterListWithType(std::vector<gameFile>& list, const unsigned int& iType);
+        std::string makeFilepath(const gameFile& gf, const DirectoryConfig& dirConf);
     private:
         std::string serialsFilepath;
         std::string logoFilepath;

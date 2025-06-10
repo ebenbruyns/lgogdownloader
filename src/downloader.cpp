@@ -200,16 +200,6 @@ bool Downloader::isLoggedIn()
 */
 int Downloader::init()
 {
-    if (!Globals::globalConfig.sGameHasDLCList.empty())
-    {
-        if (Globals::globalConfig.gamehasdlc.empty())
-        {
-            std::string game_has_dlc_list = this->getResponse(Globals::globalConfig.sGameHasDLCList);
-            if (!game_has_dlc_list.empty())
-                Globals::globalConfig.gamehasdlc.initialize(Util::tokenize(game_has_dlc_list, "\n"));
-        }
-    }
-
     if (!gogGalaxy->init())
     {
         if (gogGalaxy->refreshLogin())
@@ -265,7 +255,7 @@ int Downloader::login()
         email = Globals::globalConfig.sEmail;
         password = Globals::globalConfig.sPassword;
     }
-    else if (!bForceGUI)
+    else if (!(bForceGUI || Globals::globalConfig.bForceBrowserLogin))
     {
         if (!isatty(STDIN_FILENO)) {
             /* Attempt to read this stuff from elsewhere */
@@ -293,48 +283,49 @@ int Downloader::login()
         }
     }
 
-    if ((email.empty() || password.empty()) && (!headless && !bForceGUI))
+    if ((email.empty() || password.empty())
+        && !(Globals::globalConfig.bForceBrowserLogin || headless || bForceGUI)
+    )
     {
         std::cerr << "Email and/or password empty" << std::endl;
         return 0;
     }
-    else
+
+    // Login to website and Galaxy API
+    if (Globals::globalConfig.bLogin)
     {
-        // Login to website and Galaxy API
-        if (Globals::globalConfig.bLogin)
+        // Delete old cookies
+        if (boost::filesystem::exists(Globals::globalConfig.curlConf.sCookiePath))
+            if (!boost::filesystem::remove(Globals::globalConfig.curlConf.sCookiePath))
+                std::cerr << "Failed to delete " << Globals::globalConfig.curlConf.sCookiePath << std::endl;
+
+        int iLoginResult = gogWebsite->Login(email, password);
+
+        if (iLoginResult < 1)
         {
-            // Delete old cookies
-            if (boost::filesystem::exists(Globals::globalConfig.curlConf.sCookiePath))
-                if (!boost::filesystem::remove(Globals::globalConfig.curlConf.sCookiePath))
-                    std::cerr << "Failed to delete " << Globals::globalConfig.curlConf.sCookiePath << std::endl;
-
-            int iLoginResult = gogWebsite->Login(email, password);
-
-            if (iLoginResult < 1)
+            std::cerr << "Galaxy: Login failed" << std::endl;
+            return 0;
+        }
+        else
+        {
+            std::cerr << "Galaxy: Login successful" << std::endl;
+            if (!Globals::galaxyConf.getJSON().empty())
             {
-                std::cerr << "Galaxy: Login failed" << std::endl;
-                return 0;
-            }
-            else
-            {
-                std::cerr << "Galaxy: Login successful" << std::endl;
-                if (!Globals::galaxyConf.getJSON().empty())
-                {
-                    this->saveGalaxyJSON();
-                }
-            }
-
-            if (gogWebsite->IsLoggedIn())
-            {
-                std::cerr << "HTTP: Login successful" << std::endl;
-            }
-            else
-            {
-                std::cerr << "HTTP: Login failed" << std::endl;
-                return 0;
+                this->saveGalaxyJSON();
             }
         }
+
+        if (gogWebsite->IsLoggedIn())
+        {
+            std::cerr << "HTTP: Login successful" << std::endl;
+        }
+        else
+        {
+            std::cerr << "HTTP: Login failed" << std::endl;
+            return 0;
+        }
     }
+
     return 1;
 }
 
@@ -577,6 +568,10 @@ int Downloader::listGames()
             return 1;
         }
         std::cout << userdata << std::endl;
+    }
+    else if (Globals::globalConfig.iListFormat == GlobalConstants::LIST_FORMAT_WISHLIST)
+    {
+        this->showWishlist();
     }
     else
     {
@@ -1717,8 +1712,7 @@ void Downloader::checkOrphans()
             }
             for (unsigned int j = 0; j < platformIds.size(); ++j)
             {
-                std::string directory = config.dirConf.sDirectory + "/" + config.dirConf.sGameSubdir + "/";
-                Util::filepathReplaceReservedStrings(directory, games[i].gamename, platformIds[j]);
+                std::string directory = games[i].makeCustomFilepath("", games[i], config.dirConf);
                 boost::filesystem::path path (directory);
                 if (boost::filesystem::exists(path))
                 {
@@ -1754,6 +1748,9 @@ void Downloader::checkOrphans()
                                 if (config.ignorelist.isBlacklisted(filepath.substr(pathlen))) {
                                     if (config.iMsgLevel >= MSGLEVEL_VERBOSE)
                                         std::cerr << "skipped ignorelisted file " << filepath << std::endl;
+                                } else if (config.blacklist.isBlacklisted(filepath.substr(pathlen))) {
+                                    if (config.iMsgLevel >= MSGLEVEL_VERBOSE)
+                                        std::cerr << "skipped blacklisted file " << filepath << std::endl;
                                 } else {
                                     boost::regex expression(config.sOrphanRegex); // Limit to files matching the regex
                                     boost::match_results<std::string::const_iterator> what;
@@ -2114,6 +2111,7 @@ std::vector<gameDetails> Downloader::getGameDetailsFromJsonNode(Json::Value root
         Json::Value gameDetailsNode = (root.isArray() ? root[i] : root); // This json node can be array or non-array so take that into account
         gameDetails game;
         game.gamename = gameDetailsNode["gamename"].asString();
+        game.gamename_basegame = gameDetailsNode["gamename_basegame"].asString();
 
         // DLCs are handled as part of the game so make sure that filtering is done with base game name
         if (recursion_level == 0) // recursion level is 0 when handling base game
@@ -2124,6 +2122,7 @@ std::vector<gameDetails> Downloader::getGameDetailsFromJsonNode(Json::Value root
                 continue;
         }
         game.title = gameDetailsNode["title"].asString();
+        game.title_basegame = gameDetailsNode["title_basegame"].asString();
         game.icon = gameDetailsNode["icon"].asString();
         game.serials = gameDetailsNode["serials"].asString();
         game.changelog = gameDetailsNode["changelog"].asString();
@@ -2165,6 +2164,9 @@ std::vector<gameDetails> Downloader::getGameDetailsFromJsonNode(Json::Value root
                         fileDetails.language = fileDetailsNode["language"].asUInt();
                         fileDetails.silent = fileDetailsNode["silent"].asInt();
                         fileDetails.gamename = fileDetailsNode["gamename"].asString();
+                        fileDetails.title = fileDetailsNode["title"].asString();
+                        fileDetails.gamename_basegame = fileDetailsNode["gamename_basegame"].asString();
+                        fileDetails.title_basegame = fileDetailsNode["title_basegame"].asString();
                         fileDetails.type = fileDetailsNode["type"].asUInt();
                         fileDetails.galaxy_downlink_json_url = fileDetailsNode["galaxy_downlink_json_url"].asString();
                         if (!fileDetailsNode["version"].empty())
@@ -2405,12 +2407,24 @@ int Downloader::downloadFileWithId(const std::string& fileid_string, const std::
     }
     else
     {
-        std::string gamename, fileid, url;
-        gamename.assign(fileid_string.begin(), fileid_string.begin()+pos);
-        fileid.assign(fileid_string.begin()+pos+1, fileid_string.end());
+        bool bIsDLC = false;
+        std::string gamename, dlc_gamename, fileid, url;
+        std::vector<std::string> fileid_vector = Util::tokenize(fileid_string, "/");
+        if (fileid_vector.size() == 3)
+            bIsDLC = true;
+
+        gamename = fileid_vector[0];
+        if (bIsDLC)
+        {
+            dlc_gamename = fileid_vector[1];
+            fileid = fileid_vector[2];
+        }
+        else
+            fileid = fileid_vector[1];
 
         std::string product_id;
-        bool bSelectOK = this->galaxySelectProductIdHelper(gamename, product_id);
+        std::string gamename_select = "^" + gamename + "$";
+        bool bSelectOK = this->galaxySelectProductIdHelper(gamename_select, product_id);
 
         if (!bSelectOK || product_id.empty())
         {
@@ -2426,12 +2440,19 @@ int Downloader::downloadFileWithId(const std::string& fileid_string, const std::
         }
 
         gameDetails gd = gogGalaxy->productInfoJsonToGameDetails(productInfo, dlConf);
+        gd.makeFilepaths(Globals::globalConfig.dirConf);
 
         auto vFiles = gd.getGameFileVector();
         gameFile gf;
         bool bFoundMatchingFile = false;
         for (auto f : vFiles)
         {
+            if (bIsDLC)
+            {
+                if (f.gamename != dlc_gamename)
+                    continue;
+            }
+
             if (f.id == fileid)
             {
                 gf = f;
@@ -2442,7 +2463,13 @@ int Downloader::downloadFileWithId(const std::string& fileid_string, const std::
 
         if (!bFoundMatchingFile)
         {
-            std::cerr << "Failed to find file info (product id: " << product_id << " / file id: " << fileid << ")" << std::endl;
+            std::string error_msg = "Failed to find file info (";
+            error_msg += "product id: " + product_id;
+            error_msg += (bIsDLC ? " / dlc gamename: " + dlc_gamename : "");
+            error_msg += " / file id: " + fileid;
+            error_msg += ")";
+
+            std::cerr << error_msg << std::endl;
             return 1;
         }
 
@@ -2485,7 +2512,7 @@ int Downloader::downloadFileWithId(const std::string& fileid_string, const std::
         std::string filename, filepath;
         filename = gogGalaxy->getPathFromDownlinkUrl(url, gf.gamename);
         if (output_filepath.empty())
-            filepath = Util::makeFilepath(Globals::globalConfig.dirConf.sDirectory, filename, gf.gamename);
+            filepath = gf.getFilepath();
         else
             filepath = output_filepath;
         std::cout << "Downloading: " << filepath << std::endl;
@@ -3051,6 +3078,21 @@ void Downloader::processDownloadQueue(Config conf, const unsigned int& tid)
         }
 
         std::string xml;
+        bool bFileAlreadyExists = false;
+        bool bIsComplete = false;
+        off_t filesize_api = 0;
+        try
+        {
+            filesize_api = std::stol(gf.size);
+        }
+        catch (std::invalid_argument& e)
+        {
+            filesize_api = 0;
+        }
+
+        if (boost::filesystem::exists(filepath) && boost::filesystem::is_regular_file(filepath))
+            bFileAlreadyExists = true;
+
         if (gf.type & (GlobalConstants::GFTYPE_INSTALLER | GlobalConstants::GFTYPE_PATCH) && conf.dlConf.bRemoteXML)
         {
             std::string xml_url;
@@ -3080,10 +3122,95 @@ void Downloader::processDownloadQueue(Config conf, const unsigned int& tid)
                 }
             }
         }
+        else if ((gf.type & GlobalConstants::GFTYPE_EXTRA) && bFileAlreadyExists)
+        {
+            off_t filesize_local = boost::filesystem::file_size(filepath);
+            off_t filesize_xml = 0;
+            off_t filesize_compare = 0;
 
-        bool bIsComplete = false;
+            if (bLocalXMLExists)
+            {
+                tinyxml2::XMLDocument local_xml;
+                local_xml.LoadFile(local_xml_file.string().c_str());
+                tinyxml2::XMLElement *fileElem = local_xml.FirstChildElement("file");
+
+                if (fileElem)
+                {
+                    std::string total_size = fileElem->Attribute("total_size");
+                    if (!total_size.empty())
+                    {
+                        filesize_xml = std::stol(total_size);
+                        try
+                        {
+                            filesize_xml = std::stol(total_size);
+                        }
+                        catch (std::invalid_argument& e)
+                        {
+                            filesize_xml = 0;
+                        }
+                    }
+                }
+            }
+
+            if(Globals::globalConfig.bTrustAPIForExtras)
+            {
+                filesize_compare = filesize_api;
+            }
+            else
+            {
+                // API is not trusted to give correct details for extras
+                // Get size from content-length header and compare to it instead
+                off_t filesize_content_length = 0;
+                std::ostringstream memory;
+                std::string url = downlinkJson["downlink"].asString();
+
+                curl_easy_setopt(curlheader, CURLOPT_URL, url.c_str());
+                curl_easy_setopt(curlheader, CURLOPT_WRITEDATA, &memory);
+                curl_easy_perform(curlheader);
+                curl_easy_getinfo(curlheader, CURLINFO_CONTENT_LENGTH_DOWNLOAD_T, &filesize_content_length);
+                memory.str(std::string());
+
+                filesize_compare = filesize_content_length;
+
+                msgQueue.push(Message(filepath.filename().string() + ": filesize_local: " + std::to_string(filesize_local) + ", filesize_api: " + std::to_string(filesize_api) + ", filesize_content_length: " + std::to_string(filesize_content_length), MSGTYPE_INFO, msg_prefix, MSGLEVEL_DEBUG));
+            }
+
+            bool bLocalAssumedComplete = false;
+            if (filesize_xml > 0)
+            {
+                bLocalAssumedComplete = (filesize_local == filesize_xml);
+            }
+
+            if (bLocalAssumedComplete)
+            {
+                bSameVersion = (filesize_local == filesize_compare);
+
+                if (bSameVersion)
+                    bIsComplete = true;
+            }
+            else
+            {
+                if (filesize_local == filesize_compare)
+                {
+                    bIsComplete = true;
+                    bSameVersion = true;
+                }
+                else
+                {
+                    bIsComplete = false;
+                    // Assume same version if smaller than remote file
+                    bSameVersion = (filesize_local < filesize_compare);
+                }
+            }
+        }
+
+        if (bIsComplete)
+        {
+            msgQueue.push(Message("Skipping complete file: " + filepath.filename().string(), MSGTYPE_INFO, msg_prefix, MSGLEVEL_VERBOSE));
+        }
+
         bool bResume = false;
-        if (boost::filesystem::exists(filepath) && boost::filesystem::is_regular_file(filepath))
+        if (bFileAlreadyExists && !bIsComplete)
         {
             if (bSameVersion)
             {
@@ -3115,54 +3242,6 @@ void Downloader::processDownloadQueue(Config conf, const unsigned int& tid)
                             bIsComplete = true; // Set to true so we can skip after saving xml data
                         }
                     }
-                }
-                // Special case for extras because they don't have remote XML data
-                // and the API responses for extras can't be trusted
-                else if (gf.type & GlobalConstants::GFTYPE_EXTRA)
-                {
-                    off_t filesize_local = boost::filesystem::file_size(filepath);
-                    off_t filesize_api = 0;
-                    try
-                    {
-                        filesize_api = std::stol(gf.size);
-                    }
-                    catch (std::invalid_argument& e)
-                    {
-                        filesize_api = 0;
-                    }
-
-                    // Check file size against file size reported by API
-                    if(Globals::globalConfig.bTrustAPIForExtras)
-                    {
-                        if (filesize_local == filesize_api)
-                        {
-                            bIsComplete = true;
-                        }
-                    }
-                    else
-                    {
-                        // API is not trusted to give correct details for extras
-                        // Get size from content-length header and compare to it instead
-                        off_t filesize_content_length = 0;
-                        std::ostringstream memory;
-                        std::string url = downlinkJson["downlink"].asString();
-
-                        curl_easy_setopt(curlheader, CURLOPT_URL, url.c_str());
-                        curl_easy_setopt(curlheader, CURLOPT_WRITEDATA, &memory);
-                        curl_easy_perform(curlheader);
-                        curl_easy_getinfo(curlheader, CURLINFO_CONTENT_LENGTH_DOWNLOAD_T, &filesize_content_length);
-                        memory.str(std::string());
-
-                        if (filesize_local == filesize_content_length)
-                        {
-                            bIsComplete = true;
-                        }
-
-                        msgQueue.push(Message(filepath.filename().string() + ": filesize_local: " + std::to_string(filesize_local) + ", filesize_api: " + std::to_string(filesize_api) + ", filesize_content_length: " + std::to_string(filesize_content_length), MSGTYPE_INFO, msg_prefix, MSGLEVEL_DEBUG));
-                    }
-
-                    if (bIsComplete)
-                        msgQueue.push(Message("Skipping complete file: " + filepath.filename().string(), MSGTYPE_INFO, msg_prefix, MSGLEVEL_VERBOSE));
                 }
             }
             else
@@ -3771,6 +3850,40 @@ void Downloader::saveGalaxyJSON()
     }
 }
 
+int Downloader::galaxyGetBuildIndexWithBuildId(Json::Value json, const std::string& build_id)
+{
+    int build_index = -1;
+
+    for (unsigned int i = 0; i < json["items"].size(); ++i)
+    {
+        std::string build_id_json = json["items"][i]["build_id"].asString();
+        if (build_id == build_id_json)
+        {
+            build_index = i;
+            break;
+        }
+    }
+
+    // If we didn't match any build index with given id
+    // Try to use build id as index
+    if (build_index == -1)
+    {
+        int build_id_as_int = -1;
+        try
+        {
+            build_id_as_int = std::stoi(build_id);
+        }
+        catch (...)
+        {
+            // Failed to cast build id to int
+        }
+
+        build_index = build_id_as_int;
+    }
+
+    return build_index;
+}
+
 bool Downloader::galaxySelectProductIdHelper(const std::string& product_id, std::string& selected_product)
 {
     selected_product = product_id;
@@ -3901,33 +4014,34 @@ std::vector<galaxyDepotItem> Downloader::galaxyGetDepotItemVectorFromJson(const 
         }
     }
 
-    // Set product id for items
+    // Set product id for items and add product id to small files container name
     for (auto it = items.begin(); it != items.end(); ++it)
     {
         if (it->product_id.empty())
         {
             it->product_id = product_id;
         }
+        if (it->isSmallFilesContainer)
+        {
+            it->path += "_" + it->product_id;
+        }
     }
 
     return items;
 }
 
-void Downloader::galaxyInstallGame(const std::string& product_id, int build_index, const unsigned int& iGalaxyArch)
+void Downloader::galaxyInstallGame(const std::string& product_id, const std::string& build_id, const unsigned int& iGalaxyArch)
 {
     std::string id;
     if(this->galaxySelectProductIdHelper(product_id, id))
     {
         if (!id.empty())
-            this->galaxyInstallGameById(id, build_index, iGalaxyArch);
+            this->galaxyInstallGameById(id, build_id, iGalaxyArch);
     }
 }
 
-void Downloader::galaxyInstallGameById(const std::string& product_id, int build_index, const unsigned int& iGalaxyArch)
+void Downloader::galaxyInstallGameById(const std::string& product_id, const std::string& build_id, const unsigned int& iGalaxyArch)
 {
-    if (build_index < 0)
-        build_index = 0;
-
     std::string sPlatform;
     unsigned int iPlatform = Globals::globalConfig.dlConf.iGalaxyPlatform;
     if (iPlatform == GlobalConstants::PLATFORM_LINUX)
@@ -3950,6 +4064,9 @@ void Downloader::galaxyInstallGameById(const std::string& product_id, int build_
 
         return;
     }
+
+    int build_index = this->galaxyGetBuildIndexWithBuildId(json, build_id);
+    build_index = std::max(0, build_index);
 
     if (json["items"][build_index]["generation"].asInt() != 2)
     {
@@ -3993,6 +4110,49 @@ void Downloader::galaxyInstallGameById(const std::string& product_id, int build_
         }
     }
 
+    std::vector<galaxyDepotItem> items_smallfiles;
+    std::vector<galaxyDepotItem> sfc_vector;
+    bool bUseSmallFilesContainer = true;
+    for (auto item : items)
+    {
+        if (item.isInSFC)
+        {
+            std::string item_install_path = install_path + "/" + item.path;
+            if (boost::filesystem::exists(item_install_path))
+            {
+                bUseSmallFilesContainer = false;
+                break;
+            }
+        }
+    }
+
+    if (!bUseSmallFilesContainer)
+    {
+        for (std::vector<galaxyDepotItem>::iterator it = items.begin(); it != items.end();)
+        {
+            if (it->isSmallFilesContainer)
+                it = items.erase(it);
+            else
+                ++it;
+        }
+    }
+    else
+    {
+        for (std::vector<galaxyDepotItem>::iterator it = items.begin(); it != items.end();)
+        {
+            if (it->isSmallFilesContainer)
+                sfc_vector.push_back(*it);
+
+            if (it->isInSFC)
+            {
+                items_smallfiles.push_back(*it);
+                it = items.erase(it);
+            }
+            else
+                ++it;
+        }
+    }
+
     // Check for differences between previously installed build and new build
     std::vector<galaxyDepotItem> items_old;
 
@@ -4007,15 +4167,7 @@ void Downloader::galaxyInstallGameById(const std::string& product_id, int build_
 
         if (!old_build_id.empty())
         {
-            for (unsigned int i = 0; i < json_builds["items"].size(); ++i)
-            {
-                std::string build_id = json_builds["items"][i]["build_id"].asString();
-                if (build_id == old_build_id)
-                {
-                    old_build_index = i;
-                    break;
-                }
-            }
+            old_build_index = this->galaxyGetBuildIndexWithBuildId(json_builds, old_build_id);
         }
     }
 
@@ -4124,7 +4276,66 @@ void Downloader::galaxyInstallGameById(const std::string& product_id, int build_
     vThreads.clear();
     vDownloadInfo.clear();
 
+    if (bUseSmallFilesContainer)
+    {
+        for (auto container : sfc_vector)
+        {
+            std::string container_install_path = install_path + "/" + container.path;
+            if (!boost::filesystem::exists(container_install_path))
+                continue;
+
+            std::cout << "Extracting small files container " << container_install_path << std::endl;
+
+            for (auto item : items_smallfiles)
+            {
+                if (item.product_id != container.product_id)
+                    continue;
+
+                std::string item_install_path = install_path + "/" + item.path;
+                std::cout << item_install_path << std::endl;
+                std::ifstream sfc(container_install_path, std::ifstream::binary);
+                if (sfc)
+                {
+                    sfc.seekg(item.sfc_offset, sfc.beg);
+                    char *filecontents = (char *) malloc(item.sfc_size);
+                    sfc.read(filecontents, item.sfc_size);
+                    sfc.close();
+
+                    // Check that directory exists and create it
+                    boost::filesystem::path path = item_install_path;
+                    boost::filesystem::path directory = path.parent_path();
+                    if (!boost::filesystem::exists(directory))
+                    {
+                        if (!boost::filesystem::create_directories(directory))
+                        {
+                            std::cout << "Failed to create directory: " << directory << std::endl;
+                            free(filecontents);
+                            continue;
+                        }
+                    }
+
+                    std::ofstream output(item_install_path, std::ofstream::binary);
+                    if (output)
+                    {
+                        output.write(filecontents, item.sfc_size);
+                        output.close();
+                    }
+                    free(filecontents);
+                }
+            }
+
+            std::cout << "Deleting small files container " << container_install_path << std::endl;
+            if (!boost::filesystem::remove(container_install_path))
+                std::cerr << "Failed to delete " << container_install_path << std::endl;
+        }
+    }
+
     std::cout << "Checking for orphaned files" << std::endl;
+    if (bUseSmallFilesContainer)
+    {
+        // Add small files back to items vector for ophan checking
+        items.insert(std::end(items), std::begin(items_smallfiles), std::end(items_smallfiles));
+    }
     std::vector<std::string> orphans = this->galaxyGetOrphanedFiles(items, install_path);
     std::cout << "\t" << orphans.size() << " orphaned files" << std::endl;
     for (unsigned int i = 0; i < orphans.size(); ++i)
@@ -4140,6 +4351,69 @@ void Downloader::galaxyInstallGameById(const std::string& product_id, int build_
         else
             std::cout << "\t" << orphans[i] << std::endl;
     }
+}
+
+void Downloader::galaxyListCDNs(const std::string& product_id, const std::string& build_id)
+{
+    std::string id;
+    if(this->galaxySelectProductIdHelper(product_id, id))
+    {
+        if (!id.empty())
+            this->galaxyListCDNsById(id, build_id);
+    }
+}
+
+void Downloader::galaxyListCDNsById(const std::string& product_id, const std::string& build_id)
+{
+    std::string sPlatform;
+    unsigned int iPlatform = Globals::globalConfig.dlConf.iGalaxyPlatform;
+    if (iPlatform == GlobalConstants::PLATFORM_LINUX)
+        sPlatform = "linux";
+    else if (iPlatform == GlobalConstants::PLATFORM_MAC)
+        sPlatform = "osx";
+    else
+        sPlatform = "windows";
+
+    Json::Value json = gogGalaxy->getProductBuilds(product_id, sPlatform);
+
+    // JSON is empty and platform is Linux. Most likely cause is that Galaxy API doesn't have Linux support
+    if (json.empty() && iPlatform == GlobalConstants::PLATFORM_LINUX)
+    {
+        std::cout << "Galaxy API doesn't have Linux support" << std::endl;
+
+        return;
+    }
+
+    int build_index = this->galaxyGetBuildIndexWithBuildId(json, build_id);
+    build_index = std::max(0, build_index);
+
+    if (json["items"][build_index]["generation"].asInt() != 2)
+    {
+        std::cout << "Only generation 2 builds are supported currently" << std::endl;
+        return;
+    }
+
+    std::string link = json["items"][build_index]["link"].asString();
+    std::string buildHash;
+    buildHash.assign(link.begin()+link.find_last_of("/")+1, link.end());
+
+    json = gogGalaxy->getSecureLink(product_id, "/");
+
+    std::vector<std::string> vEndpointNames;
+    if (!json.empty())
+    {
+        for (unsigned int i = 0; i < json["urls"].size(); ++i)
+        {
+            std::string endpoint_name = json["urls"][i]["endpoint_name"].asString();
+            if (!endpoint_name.empty())
+                vEndpointNames.push_back(endpoint_name);
+        }
+    }
+
+    for (auto endpoint : vEndpointNames)
+        std::cout << endpoint << std::endl;
+
+    return;
 }
 
 void Downloader::processGalaxyDownloadQueue(const std::string& install_path, Config conf, const unsigned int& tid)
@@ -4540,17 +4814,17 @@ void Downloader::processGalaxyDownloadQueue(const std::string& install_path, Con
     return;
 }
 
-void Downloader::galaxyShowBuilds(const std::string& product_id, int build_index)
+void Downloader::galaxyShowBuilds(const std::string& product_id, const std::string& build_id)
 {
     std::string id;
     if(this->galaxySelectProductIdHelper(product_id, id))
     {
         if (!id.empty())
-            this->galaxyShowBuildsById(id, build_index);
+            this->galaxyShowBuildsById(id, build_id);
     }
 }
 
-void Downloader::galaxyShowBuildsById(const std::string& product_id, int build_index)
+void Downloader::galaxyShowBuildsById(const std::string& product_id, const std::string& build_id)
 {
     std::string sPlatform;
     unsigned int iPlatform = Globals::globalConfig.dlConf.iGalaxyPlatform;
@@ -4595,12 +4869,22 @@ void Downloader::galaxyShowBuildsById(const std::string& product_id, int build_i
         else
         {
             std::cout << "Using these installers" << std::endl;
-            for (unsigned int i = 0; i < vInstallers.size(); ++i)
-                std::cout << "\t" << vInstallers[i].gamename << "/" << vInstallers[i].id << std::endl;
+            for (auto installer : vInstallers)
+            {
+                std::string str = installer.gamename + "/" + installer.id;
+                if (installer.version.empty())
+                    str += " (no version info available)";
+                else
+                    str += " (Version: " + installer.version + ")";
+
+                std::cout << "\t" << str << std::endl;
+            }
         }
 
         return;
     }
+
+    int build_index = this->galaxyGetBuildIndexWithBuildId(json, build_id);
 
     if (build_index < 0)
     {
@@ -4681,57 +4965,57 @@ std::pair<std::string::const_iterator, std::string::const_iterator> getline(std:
     return { end, end };
 }
 
-void Downloader::uploadCloudSaves(const std::string& product_id, int build_index)
+void Downloader::uploadCloudSaves(const std::string& product_id, const std::string& build_id)
 {
     std::string id;
     if(this->galaxySelectProductIdHelper(product_id, id))
     {
         if (!id.empty())
-            this->uploadCloudSavesById(id, build_index);
+            this->uploadCloudSavesById(id, build_id);
     }
 }
 
-void Downloader::deleteCloudSaves(const std::string& product_id, int build_index)
+void Downloader::deleteCloudSaves(const std::string& product_id, const std::string& build_id)
 {
     std::string id;
     if(this->galaxySelectProductIdHelper(product_id, id))
     {
         if (!id.empty())
-            this->deleteCloudSavesById(id, build_index);
+            this->deleteCloudSavesById(id, build_id);
     }
 }
 
-void Downloader::downloadCloudSaves(const std::string& product_id, int build_index)
+void Downloader::downloadCloudSaves(const std::string& product_id, const std::string& build_id)
 {
     std::string id;
     if(this->galaxySelectProductIdHelper(product_id, id))
     {
         if (!id.empty())
-            this->downloadCloudSavesById(id, build_index);
+            this->downloadCloudSavesById(id, build_id);
     }
 }
 
-void Downloader::galaxyShowCloudSaves(const std::string& product_id, int build_index)
+void Downloader::galaxyShowCloudSaves(const std::string& product_id, const std::string& build_id)
 {
     std::string id;
     if(this->galaxySelectProductIdHelper(product_id, id))
     {
         if (!id.empty())
-            this->galaxyShowCloudSavesById(id, build_index);
+            this->galaxyShowCloudSavesById(id, build_id);
     }
 }
 
-void Downloader::galaxyShowLocalCloudSaves(const std::string& product_id, int build_index)
+void Downloader::galaxyShowLocalCloudSaves(const std::string& product_id, const std::string& build_id)
 {
     std::string id;
     if(this->galaxySelectProductIdHelper(product_id, id))
     {
         if (!id.empty())
-            this->galaxyShowLocalCloudSavesById(id, build_index);
+            this->galaxyShowLocalCloudSavesById(id, build_id);
     }
 }
 
-std::map<std::string, std::string> Downloader::cloudSaveLocations(const std::string& product_id, int build_index) {
+std::map<std::string, std::string> Downloader::cloudSaveLocations(const std::string& product_id, const std::string& build_id) {
     std::string sPlatform;
     unsigned int iPlatform = Globals::globalConfig.dlConf.iGalaxyPlatform;
     if (iPlatform == GlobalConstants::PLATFORM_LINUX) {
@@ -4748,6 +5032,7 @@ std::map<std::string, std::string> Downloader::cloudSaveLocations(const std::str
 
     Json::Value json = gogGalaxy->getProductBuilds(product_id, sPlatform);
 
+    int build_index = this->galaxyGetBuildIndexWithBuildId(json, build_id);
     build_index = std::max(0, build_index);
 
     std::string link = json["items"][build_index]["link"].asString();
@@ -4833,8 +5118,8 @@ std::map<std::string, std::string> Downloader::cloudSaveLocations(const std::str
     return name_to_location;
 }
 
-int Downloader::cloudSaveListByIdForEach(const std::string& product_id, int build_index, const std::function<void(cloudSaveFile &)> &f) {
-    auto name_to_location = this->cloudSaveLocations(product_id, build_index);
+int Downloader::cloudSaveListByIdForEach(const std::string& product_id, const std::string& build_id, const std::function<void(cloudSaveFile &)> &f) {
+    auto name_to_location = this->cloudSaveLocations(product_id, build_id);
     if(name_to_location.empty()) {
         std::cout << "No cloud save locations found" << std::endl;
         return -1;
@@ -4871,9 +5156,9 @@ int Downloader::cloudSaveListByIdForEach(const std::string& product_id, int buil
     return 0;
 }
 
-void Downloader::uploadCloudSavesById(const std::string& product_id, int build_index)
+void Downloader::uploadCloudSavesById(const std::string& product_id, const std::string& build_id)
 {
-    auto name_to_locations = cloudSaveLocations(product_id, build_index);
+    auto name_to_locations = cloudSaveLocations(product_id, build_id);
 
     if(name_to_locations.empty()) {
         std::cout << "Cloud saves not supported for this game" << std::endl;
@@ -4923,7 +5208,7 @@ void Downloader::uploadCloudSavesById(const std::string& product_id, int build_i
         return;
     }
 
-    auto res = this->cloudSaveListByIdForEach(product_id, build_index, [&](cloudSaveFile &csf) {
+    auto res = this->cloudSaveListByIdForEach(product_id, build_id, [&](cloudSaveFile &csf) {
         auto it = path_to_cloudSaveFile.find(csf.path);
 
         //If remote save is not locally stored, skip
@@ -4977,7 +5262,7 @@ void Downloader::uploadCloudSavesById(const std::string& product_id, int build_i
     vDownloadInfo.clear();
 }
 
-void Downloader::deleteCloudSavesById(const std::string& product_id, int build_index) {
+void Downloader::deleteCloudSavesById(const std::string& product_id, const std::string& build_id) {
     if(Globals::globalConfig.cloudWhiteList.empty() && !Globals::globalConfig.bCloudForce) {
         std::cout << "No files have been whitelisted, either use \'--cloud-whitelist\' or \'--cloud-force\'" << std::endl;
         return;
@@ -5001,7 +5286,7 @@ void Downloader::deleteCloudSavesById(const std::string& product_id, int build_i
     curl_easy_setopt(dlhandle, CURLOPT_HTTPHEADER, header);
     curl_easy_setopt(dlhandle, CURLOPT_CUSTOMREQUEST, "DELETE");
 
-    this->cloudSaveListByIdForEach(product_id, build_index, [dlhandle](cloudSaveFile &csf) {
+    this->cloudSaveListByIdForEach(product_id, build_id, [dlhandle](cloudSaveFile &csf) {
         auto url = "https://cloudstorage.gog.com/v1/" + Globals::galaxyConf.getUserId() + '/' + Globals::galaxyConf.getClientId() + '/' + csf.path;
         curl_easy_setopt(dlhandle, CURLOPT_URL, url.c_str());
 
@@ -5019,8 +5304,8 @@ void Downloader::deleteCloudSavesById(const std::string& product_id, int build_i
     curl_easy_cleanup(dlhandle);
 }
 
-void Downloader::downloadCloudSavesById(const std::string& product_id, int build_index) {
-    auto res = this->cloudSaveListByIdForEach(product_id, build_index, [](cloudSaveFile &csf) {
+void Downloader::downloadCloudSavesById(const std::string& product_id, const std::string& build_id) {
+    auto res = this->cloudSaveListByIdForEach(product_id, build_id, [](cloudSaveFile &csf) {
         boost::filesystem::path filepath = csf.location;
 
         if(boost::filesystem::exists(filepath)) {
@@ -5071,9 +5356,9 @@ void Downloader::downloadCloudSavesById(const std::string& product_id, int build
     vDownloadInfo.clear();
 }
 
-void Downloader::galaxyShowCloudSavesById(const std::string& product_id, int build_index)
+void Downloader::galaxyShowCloudSavesById(const std::string& product_id, const std::string& build_id)
 {
-    this->cloudSaveListByIdForEach(product_id, build_index, [](cloudSaveFile &csf) {
+    this->cloudSaveListByIdForEach(product_id, build_id, [](cloudSaveFile &csf) {
         boost::filesystem::path filepath = csf.location;
         filepath = boost::filesystem::absolute(filepath, boost::filesystem::current_path());
 
@@ -5099,8 +5384,8 @@ void Downloader::galaxyShowCloudSavesById(const std::string& product_id, int bui
     });
 }
 
-void Downloader::galaxyShowLocalCloudSavesById(const std::string& product_id, int build_index) {
-    auto name_to_locations = cloudSaveLocations(product_id, build_index);
+void Downloader::galaxyShowLocalCloudSavesById(const std::string& product_id, const std::string& build_id) {
+    auto name_to_locations = cloudSaveLocations(product_id, build_id);
 
     if(name_to_locations.empty()) {
         std::cout << "Cloud saves not supported for this game" << std::endl;
@@ -5139,7 +5424,7 @@ void Downloader::galaxyShowLocalCloudSavesById(const std::string& product_id, in
         return;
     }
 
-    this->cloudSaveListByIdForEach(product_id, build_index, [&](cloudSaveFile &csf) {
+    this->cloudSaveListByIdForEach(product_id, build_id, [&](cloudSaveFile &csf) {
         auto it = path_to_cloudSaveFile.find(csf.path);
 
         //If remote save is not locally stored, skip
@@ -5193,6 +5478,11 @@ std::vector<std::string> Downloader::galaxyGetOrphanedFiles(const std::vector<ga
                         {
                             if (Globals::globalConfig.iMsgLevel >= MSGLEVEL_VERBOSE)
                                 std::cerr << "skipped ignorelisted file " << filepath << std::endl;
+                        }
+                        else if (Globals::globalConfig.blacklist.isBlacklisted(filepath.substr(pathlen)))
+                        {
+                            if (Globals::globalConfig.iMsgLevel >= MSGLEVEL_VERBOSE)
+                                std::cerr << "skipped blacklisted file " << filepath << std::endl;
                         }
                         else
                         {

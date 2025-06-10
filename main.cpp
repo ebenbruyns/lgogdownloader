@@ -59,7 +59,6 @@ int main(int argc, char *argv[])
     Globals::globalConfig.sConfigFilePath = Globals::globalConfig.sConfigDirectory + "/config.cfg";
     Globals::globalConfig.sBlacklistFilePath = Globals::globalConfig.sConfigDirectory + "/blacklist.txt";
     Globals::globalConfig.sIgnorelistFilePath = Globals::globalConfig.sConfigDirectory + "/ignorelist.txt";
-    Globals::globalConfig.sGameHasDLCListFilePath = Globals::globalConfig.sConfigDirectory + "/game_has_dlc.txt";
     Globals::globalConfig.sTransformConfigFilePath = Globals::globalConfig.sConfigDirectory + "/transformations.json";
 
     Globals::galaxyConf.setFilepath(Globals::globalConfig.sConfigDirectory + "/galaxy_tokens.json");
@@ -125,18 +124,25 @@ int main(int argc, char *argv[])
 
     // Create help text for --galaxy-cdn-priority option
     std::string galaxy_cdn_priority_text = "Set priority for used CDNs\n";
-    for (unsigned int i = 0; i < GlobalConstants::GALAXY_CDNS.size(); ++i)
-    {
-        galaxy_cdn_priority_text += GlobalConstants::GALAXY_CDNS[i].str + " = " + GlobalConstants::GALAXY_CDNS[i].regexp + "\n";
-    }
-    galaxy_cdn_priority_text += "\n" + priority_help_text;
+    galaxy_cdn_priority_text += "Use --galaxy-list-cdns to list available CDNs\n";
+    galaxy_cdn_priority_text += "Set priority by separating values with \",\"";
 
     // Create help text for --check-orphans
     std::string orphans_regex_default = ".*\\.(zip|exe|bin|dmg|old|deb|tar\\.gz|pkg|sh|mp4)$"; // Limit to files with these extensions (".old" is for renamed older version files)
     std::string check_orphans_text = "Check for orphaned files (files found on local filesystem that are not found on GOG servers). Sets regular expression filter (Perl syntax) for files to check. If no argument is given then the regex defaults to '" + orphans_regex_default + "'";
 
     // Help text for subdir options
-    std::string subdir_help_text = "\nTemplates:\n- %platform%\n- %gamename%\n- %gamename_firstletter%\n- %dlcname%\n- %gamename_transformed%\n- %gamename_transformed_firstletter%";
+    std::string subdir_help_text = "\nTemplates:\n"
+        "- %platform%\n"
+        "- %gamename%\n"
+        "- %gamename_firstletter%\n"
+        "- %dlcname%\n"
+        "- %gamename_transformed%\n"
+        "- %gamename_transformed_firstletter%\n"
+        "- %title%\n"
+        "- %title_stripped%\n"
+        "- %dlc_title%\n"
+        "- %dlc_title_stripped%";
 
     // Help text for include and exclude options
     std::string include_options_text;
@@ -155,6 +161,7 @@ int main(int argc, char *argv[])
     }
 
     std::string galaxy_product_id_install;
+    std::string galaxy_product_id_list_cdns;
     std::string galaxy_product_id_show_builds;
     std::string galaxy_product_id_show_cloud_paths;
     std::string galaxy_product_id_show_local_cloud_paths;
@@ -188,7 +195,6 @@ int main(int argc, char *argv[])
         bool bNoSubDirectories = false;
         bool bNoPlatformDetection = false;
         bool bNoGalaxyDependencies = false;
-        bool bUseDLCList = false;
         bool bNoFastStatusCheck = false;
         std::string sInstallerPlatform;
         std::string sInstallerLanguage;
@@ -208,6 +214,7 @@ int main(int argc, char *argv[])
 #ifdef USE_QT_GUI_LOGIN
             ("gui-login", bpo::value<bool>(&Globals::globalConfig.bForceGUILogin)->zero_tokens()->default_value(false), "Login (force GUI login)\nImplies --enable-login-gui")
 #endif
+            ("browser-login", bpo::value<bool>(&Globals::globalConfig.bForceBrowserLogin)->zero_tokens()->default_value(false), "Login (force browser login)")
             ("check-login-status", bpo::value<bool>(&bCheckLoginStatus)->zero_tokens()->default_value(false), "Check login status")
             ("list", bpo::value<std::string>(&sListFormat)->implicit_value("games"), list_format_text.c_str())
             ("download", bpo::value<bool>(&Globals::globalConfig.bDownload)->zero_tokens()->default_value(false), "Download")
@@ -226,9 +233,8 @@ int main(int argc, char *argv[])
             ("report", bpo::value<std::string>(&Globals::globalConfig.sReportFilePath)->implicit_value("lgogdownloader-report.log"), "Save report of downloaded/repaired files to specified file\nDefault filename: lgogdownloader-report.log")
             ("update-cache", bpo::value<bool>(&Globals::globalConfig.bUpdateCache)->zero_tokens()->default_value(false), "Update game details cache")
             ("no-platform-detection", bpo::value<bool>(&bNoPlatformDetection)->zero_tokens()->default_value(false), "Don't try to detect supported platforms from game shelf.\nSkips the initial fast platform detection and detects the supported platforms from game details which is slower but more accurate.\nUseful in case platform identifier is missing for some games in the game shelf.\nUsing --platform with --list doesn't work with this option.")
-            ("download-file", bpo::value<std::string>(&Globals::globalConfig.sFileIdString)->default_value(""), "Download files using fileid\n\nFormat:\n\"gamename/fileid\"\nor: \"gogdownloader://gamename/fileid\"\n\nMultiple files:\n\"gamename1/fileid1,gamename2/fileid2\"\nor: \"gogdownloader://gamename1/fileid1,gamename2/fileid2\"\n\nThis option ignores all subdir options. The files are downloaded to directory specified with --directory option.")
+            ("download-file", bpo::value<std::string>(&Globals::globalConfig.sFileIdString)->default_value(""), "Download files using fileid\n\nFormat:\n\"gamename/fileid\"\n\"gamename/dlc_gamename/fileid\"\n\"gogdownloader://gamename/fileid\"\n\"gogdownloader://gamename/dlc_name/fileid\"\n\nMultiple files:\n\"gamename1/fileid1,gamename2/fileid2,gamename2/dlcname/fileid1\"\n\nThis option ignores all subdir options. The files are downloaded to directory specified with --directory option.")
             ("output-file,o", bpo::value<std::string>(&Globals::globalConfig.sOutputFilename)->default_value(""), "Set filename of file downloaded with --download-file.")
-            ("wishlist", bpo::value<bool>(&Globals::globalConfig.bShowWishlist)->zero_tokens()->default_value(false), "Show wishlist")
             ("cacert", bpo::value<std::string>(&Globals::globalConfig.curlConf.sCACertPath)->default_value(""), "Path to CA certificate bundle in PEM format")
             ("respect-umask", bpo::value<bool>(&Globals::globalConfig.bRespectUmask)->zero_tokens()->default_value(false), "Do not adjust permissions of sensitive files")
             ("user-agent", bpo::value<std::string>(&Globals::globalConfig.curlConf.sUserAgent)->default_value(DEFAULT_USER_AGENT), "Set user agent")
@@ -282,8 +288,6 @@ int main(int argc, char *argv[])
             ("save-changelogs", bpo::value<bool>(&Globals::globalConfig.dlConf.bSaveChangelogs)->zero_tokens()->default_value(false), "Save changelogs when downloading")
             ("threads", bpo::value<unsigned int>(&Globals::globalConfig.iThreads)->default_value(4), "Number of download threads")
             ("info-threads", bpo::value<unsigned int>(&Globals::globalConfig.iInfoThreads)->default_value(4), "Number of threads for getting product info")
-            ("use-dlc-list", bpo::value<bool>(&bUseDLCList)->zero_tokens()->default_value(false), "Use DLC list specified with --dlc-list")
-            ("dlc-list", bpo::value<std::string>(&Globals::globalConfig.sGameHasDLCList)->default_value("https://raw.githubusercontent.com/Sude-/lgogdownloader-lists/master/game_has_dlc.txt"), "Set URL for list of games that have DLC")
             ("progress-interval", bpo::value<int>(&Globals::globalConfig.iProgressInterval)->default_value(100), "Set interval for progress bar update (milliseconds)\nValue must be between 1 and 10000")
             ("lowspeed-timeout", bpo::value<long int>(&Globals::globalConfig.curlConf.iLowSpeedTimeout)->default_value(30), "Set time in number seconds that the transfer speed should be below the rate set with --lowspeed-rate for it to considered too slow and aborted")
             ("lowspeed-rate", bpo::value<long int>(&Globals::globalConfig.curlConf.iLowSpeedTimeoutRate)->default_value(200), "Set average transfer speed in bytes per second that the transfer should be below during time specified with --lowspeed-timeout for it to be considered too slow and aborted")
@@ -293,6 +297,7 @@ int main(int argc, char *argv[])
             ("check-free-space", bpo::value<bool>(&Globals::globalConfig.dlConf.bFreeSpaceCheck)->zero_tokens()->default_value(false), "Check for available free space before starting download")
             ("no-fast-status-check", bpo::value<bool>(&bNoFastStatusCheck)->zero_tokens()->default_value(false), "Don't use fast status check.\nMakes --status much slower but able to catch corrupted files by calculating local file hash for all files.")
             ("trust-api-for-extras", bpo::value<bool>(&Globals::globalConfig.bTrustAPIForExtras)->zero_tokens()->default_value(false), "Trust API responses for extras to be correct.")
+            ("interface", bpo::value<std::string>(&Globals::globalConfig.curlConf.sInterface)->default_value(""), "Perform operations using a specified network interface")
         ;
 
         options_cli_no_cfg_hidden.add_options()
@@ -302,7 +307,7 @@ int main(int argc, char *argv[])
 
         options_cli_experimental.add_options()
             ("galaxy-install", bpo::value<std::string>(&galaxy_product_id_install)->default_value(""), "Install game using product id [product_id/build_index] or gamename regex [gamename/build_id]\nBuild index is used to select a build and defaults to 0 if not specified.\n\nExample: 12345/2 selects build 2 for product 12345")
-            ("galaxy-show-builds", bpo::value<std::string>(&galaxy_product_id_show_builds)->default_value(""), "Show game builds using product id [product_id/build_index] or gamename regex [gamename/build_id]\nBuild index is used to select a build and defaults to 0 if not specified.\n\nExample: 12345/2 selects build 2 for product 12345")
+            ("galaxy-show-builds", bpo::value<std::string>(&galaxy_product_id_show_builds)->default_value(""), "Show game builds using product id [product_id/build_index] or gamename regex [gamename/build_id]\nBuild index is used to select a build\nLists available builds if build index is not specified\n\nExample: 12345/2 selects build 2 for product 12345")
             ("galaxy-download-cloud-saves", bpo::value<std::string>(&galaxy_product_cloud_saves)->default_value(""), "Download cloud saves using product-id [product_id/build_index] or gamename regex [gamename/build_id]\nBuild index is used to select a build and defaults to 0 if not specified.\n\nExample: 12345/2 selects build 2 for product 12345")
             ("galaxy-upload-cloud-saves", bpo::value<std::string>(&galaxy_upload_product_cloud_saves)->default_value(""), "Upload cloud saves using product-id [product_id/build_index] or gamename regex [gamename/build_id]\nBuild index is used to select a build and defaults to 0 if not specified.\n\nExample: 12345/2 selects build 2 for product 12345")
             ("galaxy-show-cloud-saves", bpo::value<std::string>(&galaxy_product_id_show_cloud_paths)->default_value(""), "Show game cloud-saves using product id [product_id/build_index] or gamename regex [gamename/build_id]\nBuild index is used to select a build and defaults to 0 if not specified.\n\nExample: 12345/2 selects build 2 for product 12345")
@@ -313,7 +318,9 @@ int main(int argc, char *argv[])
             ("galaxy-arch", bpo::value<std::string>(&sGalaxyArch)->default_value("x64"), galaxy_arch_text.c_str())
             ("galaxy-no-dependencies", bpo::value<bool>(&bNoGalaxyDependencies)->zero_tokens()->default_value(false), "Don't download dependencies during --galaxy-install")
             ("subdir-galaxy-install", bpo::value<std::string>(&Globals::globalConfig.dirConf.sGalaxyInstallSubdir)->default_value("%install_dir%"), galaxy_install_subdir_text.c_str())
-            ("galaxy-cdn-priority", bpo::value<std::string>(&sGalaxyCDN)->default_value("edgecast,highwinds,akamai,lumen,gog_cdn"), galaxy_cdn_priority_text.c_str())
+            ("galaxy-cdn-priority", bpo::value<std::string>(&sGalaxyCDN)->default_value("edgecast,akamai_edgecast_proxy,fastly"), galaxy_cdn_priority_text.c_str())
+            ("galaxy-list-cdns", bpo::value<std::string>(&galaxy_product_id_list_cdns)->default_value(""), "List available CDNs for game using product id [product_id/build_index] or gamename regex [gamename/build_id]\nBuild index is used to select a build and defaults to 0 if not specified.\n\nExample: 12345/2 selects build 2 for product 12345")
+            ("galaxy-lowercase-path", bpo::value<bool>(&Globals::globalConfig.dlConf.bGalaxyLowercasePath)->zero_tokens()->default_value(false), "Make filepath lowercase for Windows game files")
         ;
 
         options_cli_all.add(options_cli_no_cfg).add(options_cli_cfg).add(options_cli_experimental);
@@ -438,33 +445,6 @@ int main(int argc, char *argv[])
             Globals::globalConfig.transformationsJSON = Util::readJsonFile(Globals::globalConfig.sTransformConfigFilePath);
         }
 
-        if (!bUseDLCList)
-            Globals::globalConfig.sGameHasDLCList = "";
-
-        if (Globals::globalConfig.sIgnoreDLCCountRegex.empty())
-        {
-            if (boost::filesystem::exists(Globals::globalConfig.sGameHasDLCListFilePath) && bUseDLCList)
-            {
-                std::ifstream ifs(Globals::globalConfig.sGameHasDLCListFilePath.c_str());
-                if (!ifs)
-                {
-                    std::cerr << "Could not open list of games that have dlc: " << Globals::globalConfig.sGameHasDLCListFilePath << std::endl;
-                    return 1;
-                }
-                else
-                {
-                    std::string line;
-                    std::vector<std::string> lines;
-                    while (!ifs.eof())
-                    {
-                        std::getline(ifs, line);
-                        lines.push_back(std::move(line));
-                    }
-                    Globals::globalConfig.gamehasdlc.initialize(lines);
-                }
-            }
-        }
-
         #ifdef USE_QT_GUI_LOGIN
         if (Globals::globalConfig.bForceGUILogin)
         {
@@ -472,6 +452,11 @@ int main(int argc, char *argv[])
             Globals::globalConfig.bEnableLoginGUI = true;
         }
         #endif
+
+        if (Globals::globalConfig.bForceBrowserLogin)
+        {
+            Globals::globalConfig.bLogin = true;
+        }
 
         if (Globals::globalConfig.bLogin)
         {
@@ -577,7 +562,7 @@ int main(int argc, char *argv[])
         if (Globals::globalConfig.dlConf.iGalaxyArch == 0 || Globals::globalConfig.dlConf.iGalaxyArch == Util::getOptionValue("all", GlobalConstants::GALAXY_ARCHS, false))
             Globals::globalConfig.dlConf.iGalaxyArch = GlobalConstants::ARCH_X64;
 
-        Util::parseOptionString(sGalaxyCDN, Globals::globalConfig.dlConf.vGalaxyCDNPriority, Globals::globalConfig.dlConf.iGalaxyCDN, GlobalConstants::GALAXY_CDNS);
+        Globals::globalConfig.dlConf.vGalaxyCDNPriority = Util::tokenize(sGalaxyCDN, ",");
 
         unsigned int include_value = 0;
         unsigned int exclude_value = 0;
@@ -796,9 +781,7 @@ int main(int argc, char *argv[])
 
     int res = 0;
 
-    if (Globals::globalConfig.bShowWishlist)
-        downloader.showWishlist();
-    else if (Globals::globalConfig.bUpdateCache)
+    if (Globals::globalConfig.bUpdateCache)
         downloader.updateCache();
     else if (Globals::globalConfig.bNotifications)
         downloader.checkNotifications();
@@ -823,78 +806,89 @@ int main(int argc, char *argv[])
         downloader.checkStatus();
     else if (!galaxy_product_id_show_builds.empty())
     {
-        int build_index = -1;
+        std::string build_id;
         std::vector<std::string> tokens = Util::tokenize(galaxy_product_id_show_builds, "/");
         std::string product_id = tokens[0];
         if (tokens.size() == 2)
         {
-            build_index = std::stoi(tokens[1]);
+            build_id = tokens[1];
         }
-        downloader.galaxyShowBuilds(product_id, build_index);
+        downloader.galaxyShowBuilds(product_id, build_id);
     }
     else if (!galaxy_product_id_show_cloud_paths.empty())
     {
-        int build_index = -1;
+        std::string build_id;
         std::vector<std::string> tokens = Util::tokenize(galaxy_product_id_show_cloud_paths, "/");
         std::string product_id = tokens[0];
         if (tokens.size() == 2)
         {
-            build_index = std::stoi(tokens[1]);
+            build_id = tokens[1];
         }
-        downloader.galaxyShowCloudSaves(product_id, build_index);
+        downloader.galaxyShowCloudSaves(product_id, build_id);
     }
     else if (!galaxy_product_id_show_local_cloud_paths.empty())
     {
-        int build_index = -1;
+        std::string build_id;
         std::vector<std::string> tokens = Util::tokenize(galaxy_product_id_show_local_cloud_paths, "/");
         std::string product_id = tokens[0];
         if (tokens.size() == 2)
         {
-            build_index = std::stoi(tokens[1]);
+            build_id = tokens[1];
         }
-        downloader.galaxyShowLocalCloudSaves(product_id, build_index);
+        downloader.galaxyShowLocalCloudSaves(product_id, build_id);
     }
     else if (!galaxy_product_cloud_saves_delete.empty())
     {
-        int build_index = -1;
+        std::string build_id;
         std::vector<std::string> tokens = Util::tokenize(galaxy_product_cloud_saves_delete, "/");
         std::string product_id = tokens[0];
         if (tokens.size() == 2)
         {
-            build_index = std::stoi(tokens[1]);
+            build_id = tokens[1];
         }
-        downloader.deleteCloudSaves(product_id, build_index);
+        downloader.deleteCloudSaves(product_id, build_id);
     }
     else if (!galaxy_product_id_install.empty())
     {
-        int build_index = -1;
+        std::string build_id;
         std::vector<std::string> tokens = Util::tokenize(galaxy_product_id_install, "/");
         std::string product_id = tokens[0];
         if (tokens.size() == 2)
         {
-            build_index = std::stoi(tokens[1]);
+            build_id = tokens[1];
         }
-        downloader.galaxyInstallGame(product_id, build_index, Globals::globalConfig.dlConf.iGalaxyArch);
+        downloader.galaxyInstallGame(product_id, build_id, Globals::globalConfig.dlConf.iGalaxyArch);
+    }
+    else if (!galaxy_product_id_list_cdns.empty())
+    {
+        std::string build_id;
+        std::vector<std::string> tokens = Util::tokenize(galaxy_product_id_list_cdns, "/");
+        std::string product_id = tokens[0];
+        if (tokens.size() == 2)
+        {
+            build_id = tokens[1];
+        }
+        downloader.galaxyListCDNs(product_id, build_id);
     }
     else if (!galaxy_product_cloud_saves.empty()) {
-        int build_index = -1;
+        std::string build_id;
         std::vector<std::string> tokens = Util::tokenize(galaxy_product_cloud_saves, "/");
         std::string product_id = tokens[0];
         if (tokens.size() == 2)
         {
-            build_index = std::stoi(tokens[1]);
+            build_id = tokens[1];
         }
-        downloader.downloadCloudSaves(product_id, build_index);
+        downloader.downloadCloudSaves(product_id, build_id);
     }
     else if (!galaxy_upload_product_cloud_saves.empty()) {
-        int build_index = -1;
+        std::string build_id;
         std::vector<std::string> tokens = Util::tokenize(galaxy_upload_product_cloud_saves, "/");
         std::string product_id = tokens[0];
         if (tokens.size() == 2)
         {
-            build_index = std::stoi(tokens[1]);
+            build_id = tokens[1];
         }
-        downloader.uploadCloudSaves(product_id, build_index);
+        downloader.uploadCloudSaves(product_id, build_id);
     }
     else
     {

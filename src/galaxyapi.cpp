@@ -255,6 +255,45 @@ std::vector<galaxyDepotItem> galaxyAPI::getDepotItemsVector(const std::string& h
     Json::Value json = this->getManifestV2(hash, is_dependency);
 
     std::vector<galaxyDepotItem> items;
+    if (json["depot"].isMember("smallFilesContainer"))
+    {
+        if (json["depot"]["smallFilesContainer"]["chunks"].isArray())
+        {
+            galaxyDepotItem item;
+            item.totalSizeCompressed = 0;
+            item.totalSizeUncompressed = 0;
+            item.path = "galaxy_smallfilescontainer";
+            item.isDependency = is_dependency;
+            item.isSmallFilesContainer = true;
+
+            for (unsigned int i = 0; i < json["depot"]["smallFilesContainer"]["chunks"].size(); ++i)
+            {
+                Json::Value json_chunk = json["depot"]["smallFilesContainer"]["chunks"][i];
+
+                galaxyDepotItemChunk chunk;
+                chunk.md5_compressed = json_chunk["compressedMd5"].asString();
+                chunk.md5_uncompressed = json_chunk["md5"].asString();
+                chunk.size_compressed = json_chunk["compressedSize"].asLargestUInt();
+                chunk.size_uncompressed = json_chunk["size"].asLargestUInt();
+
+                chunk.offset_compressed = item.totalSizeCompressed;
+                chunk.offset_uncompressed = item.totalSizeUncompressed;
+
+                item.totalSizeCompressed += chunk.size_compressed;
+                item.totalSizeUncompressed += chunk.size_uncompressed;
+                item.chunks.push_back(chunk);
+            }
+
+            if (json["depot"]["smallFilesContainer"].isMember("md5"))
+                item.md5 = json["depot"]["smallFilesContainer"]["md5"].asString();
+            else if (json["depot"]["smallFilesContainer"]["chunks"].size() == 1)
+                item.md5 = json["depot"]["smallFilesContainer"]["chunks"][0]["md5"].asString();
+            else
+                item.md5 = std::string();
+
+            items.push_back(item);
+        }
+    }
 
     for (unsigned int i = 0; i < json["depot"]["items"].size(); ++i)
     {
@@ -266,14 +305,29 @@ std::vector<galaxyDepotItem> galaxyAPI::getDepotItemsVector(const std::string& h
             item.path = json["depot"]["items"][i]["path"].asString();
             item.isDependency = is_dependency;
 
+            if (json["depot"]["items"][i].isMember("sfcRef"))
+            {
+                item.isInSFC = true;
+                item.sfc_offset = json["depot"]["items"][i]["sfcRef"]["offset"].asLargestUInt();
+                item.sfc_size = json["depot"]["items"][i]["sfcRef"]["size"].asLargestUInt();
+            }
+
+            if (Globals::globalConfig.dlConf.bGalaxyLowercasePath &&
+                Globals::globalConfig.dlConf.iGalaxyPlatform == GlobalConstants::PLATFORM_WINDOWS)
+            {
+                boost::algorithm::to_lower(item.path);
+            }
+
             while (Util::replaceString(item.path, "\\", "/"));
             for (unsigned int j = 0; j < json["depot"]["items"][i]["chunks"].size(); ++j)
             {
+                Json::Value json_chunk = json["depot"]["items"][i]["chunks"][j];
+
                 galaxyDepotItemChunk chunk;
-                chunk.md5_compressed = json["depot"]["items"][i]["chunks"][j]["compressedMd5"].asString();
-                chunk.md5_uncompressed = json["depot"]["items"][i]["chunks"][j]["md5"].asString();
-                chunk.size_compressed = json["depot"]["items"][i]["chunks"][j]["compressedSize"].asLargestUInt();
-                chunk.size_uncompressed = json["depot"]["items"][i]["chunks"][j]["size"].asLargestUInt();
+                chunk.md5_compressed = json_chunk["compressedMd5"].asString();
+                chunk.md5_uncompressed = json_chunk["md5"].asString();
+                chunk.size_compressed = json_chunk["compressedSize"].asLargestUInt();
+                chunk.size_uncompressed = json_chunk["size"].asLargestUInt();
 
                 chunk.offset_compressed = item.totalSizeCompressed;
                 chunk.offset_uncompressed = item.totalSizeUncompressed;
@@ -322,21 +376,29 @@ gameDetails galaxyAPI::productInfoJsonToGameDetails(const Json::Value& json, con
     if (dlConf.iInclude & GlobalConstants::GFTYPE_INSTALLER)
     {
         gamedetails.installers = this->fileJsonNodeToGameFileVector(gamedetails.gamename, json["downloads"]["installers"], GlobalConstants::GFTYPE_BASE_INSTALLER, dlConf);
+        for (auto &item : gamedetails.installers)
+            item.title = gamedetails.title;
     }
 
     if (dlConf.iInclude & GlobalConstants::GFTYPE_EXTRA)
     {
         gamedetails.extras = this->fileJsonNodeToGameFileVector(gamedetails.gamename, json["downloads"]["bonus_content"], GlobalConstants::GFTYPE_BASE_EXTRA, dlConf);
+        for (auto &item : gamedetails.extras)
+            item.title = gamedetails.title;
     }
 
     if (dlConf.iInclude & GlobalConstants::GFTYPE_PATCH)
     {
         gamedetails.patches = this->fileJsonNodeToGameFileVector(gamedetails.gamename, json["downloads"]["patches"], GlobalConstants::GFTYPE_BASE_PATCH, dlConf);
+        for (auto &item : gamedetails.patches)
+            item.title = gamedetails.title;
     }
 
     if (dlConf.iInclude & GlobalConstants::GFTYPE_LANGPACK)
     {
         gamedetails.languagepacks = this->fileJsonNodeToGameFileVector(gamedetails.gamename, json["downloads"]["language_packs"], GlobalConstants::GFTYPE_BASE_LANGPACK, dlConf);
+        for (auto &item : gamedetails.languagepacks)
+            item.title = gamedetails.title;
     }
 
     if (dlConf.iInclude & GlobalConstants::GFTYPE_DLC)
@@ -354,16 +416,34 @@ gameDetails galaxyAPI::productInfoJsonToGameDetails(const Json::Value& json, con
                 }
 
                 gameDetails dlc_gamedetails = this->productInfoJsonToGameDetails(json["expanded_dlcs"][i], dlConf);
+                dlc_gamedetails.title_basegame = gamedetails.title;
+                dlc_gamedetails.gamename_basegame = gamedetails.gamename;
 
                 // Add DLC type to all DLC files
                 for (unsigned int j = 0; j < dlc_gamedetails.installers.size(); ++j)
+                {
                     dlc_gamedetails.installers[j].type = GlobalConstants::GFTYPE_DLC_INSTALLER;
+                    dlc_gamedetails.installers[j].title_basegame = dlc_gamedetails.title_basegame;
+                    dlc_gamedetails.installers[j].gamename_basegame = dlc_gamedetails.gamename_basegame;
+                }
                 for (unsigned int j = 0; j < dlc_gamedetails.extras.size(); ++j)
+                {
                     dlc_gamedetails.extras[j].type = GlobalConstants::GFTYPE_DLC_EXTRA;
+                    dlc_gamedetails.extras[j].title_basegame = dlc_gamedetails.title_basegame;
+                    dlc_gamedetails.extras[j].gamename_basegame = dlc_gamedetails.gamename_basegame;
+                }
                 for (unsigned int j = 0; j < dlc_gamedetails.patches.size(); ++j)
+                {
                     dlc_gamedetails.patches[j].type = GlobalConstants::GFTYPE_DLC_PATCH;
+                    dlc_gamedetails.patches[j].title_basegame = dlc_gamedetails.title_basegame;
+                    dlc_gamedetails.patches[j].gamename_basegame = dlc_gamedetails.gamename_basegame;
+                }
                 for (unsigned int j = 0; j < dlc_gamedetails.languagepacks.size(); ++j)
+                {
                     dlc_gamedetails.languagepacks[j].type = GlobalConstants::GFTYPE_DLC_LANGPACK;
+                    dlc_gamedetails.languagepacks[j].title_basegame = dlc_gamedetails.title_basegame;
+                    dlc_gamedetails.languagepacks[j].gamename_basegame = dlc_gamedetails.gamename_basegame;
+                }
 
                 // Add DLC only if it has any files
                 if (!dlc_gamedetails.installers.empty() || !dlc_gamedetails.extras.empty() || !dlc_gamedetails.patches.empty() || !dlc_gamedetails.languagepacks.empty())
@@ -421,8 +501,8 @@ std::vector<gameFile> galaxyAPI::fileJsonNodeToGameFileVector(const std::string&
             std::string downlink_url = downlinkJson["downlink"].asString();
             std::string path = this->getPathFromDownlinkUrl(downlink_url, gamename);
 
-            // Check to see if path ends in "/secure" which means that we got invalid path for some reason
-            boost::regex path_re("/secure$", boost::regex::perl | boost::regex::icase);
+            // Check to see if path ends in "/secure" or "/securex" which means that we got invalid path for some reason
+            boost::regex path_re("/securex?$", boost::regex::perl | boost::regex::icase);
             boost::match_results<std::string::const_iterator> what;
             if (boost::regex_search(path, what, path_re))
                 continue;
@@ -547,35 +627,51 @@ std::string galaxyAPI::getPathFromDownlinkUrl(const std::string& downlink_url, c
 {
     std::string path;
     std::string downlink_url_unescaped = (std::string)curl_easy_unescape(curlhandle, downlink_url.c_str(), downlink_url.size(), NULL);
+    size_t filename_start_pos = 0;
 
-    // GOG has changed the url formatting few times between 2 different formats.
-    // Try to get proper file name in both cases.
-    size_t filename_end_pos;
-    if (downlink_url_unescaped.find("?path=") != std::string::npos)
+    // If url ends in "/" then remove it
+    if (downlink_url_unescaped.back() == '/')
+        downlink_url_unescaped.assign(downlink_url_unescaped.begin(), downlink_url_unescaped.end()-1);
+
+    // Assume that filename starts after last "/" in url
+    if (downlink_url_unescaped.find_last_of("/") != std::string::npos)
+        filename_start_pos = downlink_url_unescaped.find_last_of("/") + 1;
+
+    // Url contains "/gamename/"
+    if (downlink_url_unescaped.find("/" + gamename + "/") != std::string::npos)
+        filename_start_pos = downlink_url_unescaped.find("/" + gamename + "/");
+
+    // Assume that filename ends at the end of url
+    size_t filename_end_pos = downlink_url_unescaped.length();
+
+    // Check to see if url has any query strings
+    if (downlink_url_unescaped.find("?") != std::string::npos)
     {
-        size_t token_pos = downlink_url_unescaped.find("&token=");
-        size_t access_token_pos = downlink_url_unescaped.find("&access_token=");
-        if ((token_pos != std::string::npos) && (access_token_pos != std::string::npos))
-        {
-            filename_end_pos = std::min(token_pos, access_token_pos);
-        }
-        else
-        {
-            filename_end_pos = downlink_url_unescaped.find_first_of("&");
-        }
-    }
-    else
+        // Assume that filename ends at first "?"
         filename_end_pos = downlink_url_unescaped.find_first_of("?");
 
-    if (downlink_url_unescaped.find("/" + gamename + "/") != std::string::npos)
-    {
-        path.assign(downlink_url_unescaped.begin()+downlink_url_unescaped.find("/" + gamename + "/"), downlink_url_unescaped.begin()+filename_end_pos);
+        // Check for "?path="
+        if (downlink_url_unescaped.find("?path=") != std::string::npos)
+        {
+            size_t token_pos = downlink_url_unescaped.find("&token=");
+            size_t access_token_pos = downlink_url_unescaped.find("&access_token=");
+            if ((token_pos != std::string::npos) && (access_token_pos != std::string::npos))
+            {
+                filename_end_pos = std::min(token_pos, access_token_pos);
+            }
+            else
+            {
+                if (downlink_url_unescaped.find_first_of("&") != std::string::npos)
+                    filename_end_pos = downlink_url_unescaped.find_first_of("&");
+            }
+        }
     }
-    else
-    {
-        path.assign(downlink_url_unescaped.begin()+downlink_url_unescaped.find_last_of("/")+1, downlink_url_unescaped.begin()+filename_end_pos);
+
+    path.assign(downlink_url_unescaped.begin()+filename_start_pos, downlink_url_unescaped.begin()+filename_end_pos);
+
+    // Make sure that path contains "/gamename/"
+    if (path.find("/" + gamename + "/") == std::string::npos)
         path = "/" + gamename + "/" + path;
-    }
 
     // Workaround for filename issue caused by different (currently unknown) url formatting scheme
     // https://github.com/Sude-/lgogdownloader/issues/126
@@ -590,7 +686,7 @@ std::string galaxyAPI::getPathFromDownlinkUrl(const std::string& downlink_url, c
     return path;
 }
 
-std::vector<std::string> galaxyAPI::cdnUrlTemplatesFromJson(const Json::Value& json, const std::vector<unsigned int>& cdnPriority)
+std::vector<std::string> galaxyAPI::cdnUrlTemplatesFromJson(const Json::Value& json, const std::vector<std::string>& cdnPriority)
 {
     // Handle priority of CDNs
     struct urlPriority
@@ -606,10 +702,9 @@ std::vector<std::string> galaxyAPI::cdnUrlTemplatesFromJson(const Json::Value& j
         std::string endpoint_name = json["urls"][i]["endpoint_name"].asString();
 
         unsigned int score = cdnPriority.size();
-        unsigned int cdn = Util::getOptionValue(endpoint_name, GlobalConstants::GALAXY_CDNS, false);
         for (unsigned int idx = 0; idx < score; ++idx)
         {
-            if (cdn & cdnPriority[idx])
+            if (endpoint_name == cdnPriority[idx])
             {
                 score = idx;
                 break;
@@ -625,36 +720,20 @@ std::vector<std::string> galaxyAPI::cdnUrlTemplatesFromJson(const Json::Value& j
         }
 
         // Build url according to url_format
-        std::string link_base_url = json["urls"][i]["parameters"]["base_url"].asString();
-        std::string link_path = json["urls"][i]["parameters"]["path"].asString();
-        std::string link_token = json["urls"][i]["parameters"]["token"].asString();
-
-        // Add our own template to path
-        link_path += "{LGOGDOWNLOADER_GALAXY_PATH}";
-
         std::string url = json["urls"][i]["url_format"].asString();
+        for (auto cdn_url_template_param : json["urls"][i]["parameters"].getMemberNames())
+        {
+            std::string template_to_replace = "{" + cdn_url_template_param + "}";
+            std::string replacement = json["urls"][i]["parameters"][cdn_url_template_param].asString();
 
-        while(Util::replaceString(url, "{base_url}", link_base_url));
-        while(Util::replaceString(url, "{path}", link_path));
-        while(Util::replaceString(url, "{token}", link_token));
+            // Add our own template to path
+            if (template_to_replace == "{path}")
+            {
+                replacement += "{LGOGDOWNLOADER_GALAXY_PATH}";
+            }
 
-        // Highwinds specific
-        std::string link_hw_l= json["urls"][i]["parameters"]["l"].asString();
-        std::string link_hw_source = json["urls"][i]["parameters"]["source"].asString();
-        std::string link_hw_ttl = json["urls"][i]["parameters"]["ttl"].asString();
-        std::string link_hw_gog_token = json["urls"][i]["parameters"]["gog_token"].asString();
-
-        while(Util::replaceString(url, "{l}", link_hw_l));
-        while(Util::replaceString(url, "{source}", link_hw_source));
-        while(Util::replaceString(url, "{ttl}", link_hw_ttl));
-        while(Util::replaceString(url, "{gog_token}", link_hw_gog_token));
-
-        // Lumen specific
-        std::string dirs = json["urls"][i]["parameters"]["dirs"].asString();
-        std::string expires_at = json["urls"][i]["parameters"]["expires_at"].asString();
-
-        while(Util::replaceString(url, "{dirs}", dirs));
-        while(Util::replaceString(url, "{expires_at}", expires_at));
+            while(Util::replaceString(url, template_to_replace, replacement));
+        }
 
         urlPriority cdnurl;
         cdnurl.url = url;

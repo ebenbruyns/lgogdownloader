@@ -1,6 +1,6 @@
 # LGOGDownloader
 
-This repository contains the code of LGOGDownloader which is unoffcial open source downloader for [GOG.com](https://www.gog.com/).
+This repository contains the code of LGOGDownloader which is unofficial open source downloader for [GOG.com](https://www.gog.com/).
 It uses the same API as GOG Galaxy which doesn't have Linux support at the moment.
 
 ## Dependencies
@@ -15,16 +15,15 @@ It uses the same API as GOG Galaxy which doesn't have Linux support at the momen
 * [qtwebengine](https://www.qt.io/) if built with -DUSE_QT_GUI=ON
 
 ## Make dependencies
-* [cmake](https://cmake.org/) >= 3.5.0
+* [cmake](https://cmake.org/) >= 3.18.0
 * [ninja](https://github.com/ninja-build/ninja)
-* [help2man](https://www.gnu.org/software/help2man/help2man.html) (optional, man page generation)
 
 ## Debian/Ubuntu
 
     # apt install build-essential libcurl4-openssl-dev libboost-regex-dev \
     libjsoncpp-dev librhash-dev libtinyxml2-dev libtidy-dev \
     libboost-system-dev libboost-filesystem-dev libboost-program-options-dev \
-    libboost-date-time-dev libboost-iostreams-dev help2man cmake \
+    libboost-date-time-dev libboost-iostreams-dev cmake \
     pkg-config zlib1g-dev qtwebengine5-dev ninja-build
 
 ### Build and install
@@ -35,8 +34,8 @@ It uses the same API as GOG Galaxy which doesn't have Linux support at the momen
 ## Fedora
 ```
 sudo dnf install cmake make gcc gcc-c++ glibc tinyxml2-devel rhash-devel \
-libtidy-devel tinyxml-devel jsoncpp-devel liboauth-devel libcurl-devel \
-boost-devel help2man
+libtidy-devel tinyxml-devel jsoncpp-devel libcurl-devel \
+boost-devel
 ```
 ### Build and Install
 ```

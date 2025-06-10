@@ -12,7 +12,7 @@
 
 namespace GlobalConstants
 {
-    const int GAMEDETAILS_CACHE_VERSION = 5;
+    const int GAMEDETAILS_CACHE_VERSION = 7;
     const int ZLIB_WINDOW_SIZE = 15;
 
     struct optionsStruct {const unsigned int id; const std::string code; const std::string str; const std::string regexp;};
@@ -55,7 +55,7 @@ namespace GlobalConstants
         { LANGUAGE_FR, "fr", "French",     "fr|fra|fre|french|fr[_-]FR"     },
         { LANGUAGE_PL, "pl", "Polish",     "pl|pol|polish|pl[_-]PL"         },
         { LANGUAGE_RU, "ru", "Russian",    "ru|rus|russian|ru[_-]RU"        },
-        { LANGUAGE_CN, "cn", "Chinese",    "cn|zh|zho|chi|chinese|zh[_-]CN" },
+        { LANGUAGE_CN, "cn", "Chinese",    "cn|zh|zho|chi|chinese|zh[_-](CN|Hans)" },
         { LANGUAGE_CZ, "cz", "Czech",      "cz|cs|ces|cze|czech|cs[_-]CZ"   },
         { LANGUAGE_ES, "es", "Spanish",    "es|spa|spanish|es[_-]ES"        },
         { LANGUAGE_HU, "hu", "Hungarian",  "hu|hun|hungarian|hu[_-]HU"      },
@@ -102,28 +102,13 @@ namespace GlobalConstants
         { ARCH_X64, "64", "64-bit", "64|x64|64bit|64-bit" }
     };
 
-    // Galaxy CDNs
-    const unsigned int CDN_EDGECAST  = 1 << 0;
-    const unsigned int CDN_HIGHWINDS = 1 << 1;
-    const unsigned int CDN_GOG       = 1 << 2;
-    const unsigned int CDN_LUMEN     = 1 << 3;
-    const unsigned int CDN_AKAMAI    = 1 << 4;
-
-    const std::vector<optionsStruct> GALAXY_CDNS =
-    {
-        { CDN_EDGECAST,  "edgecast",   "Edgecast",  "ec|edgecast"             },
-        { CDN_HIGHWINDS, "high_winds", "Highwinds", "hw|highwinds|high_winds" },
-        { CDN_GOG,       "gog_cdn",    "GOG",       "gog|gog_cdn"             },
-        { CDN_LUMEN,     "lumen",      "Lumen",     "lumen|lumen_cdn"         },
-        { CDN_AKAMAI,    "akamai_edgecast_proxy", "Akamai", "akamai|akamai_cdn|akamai_ec|akamai_edgecast_proxy" }
-    };
-
     const unsigned int LIST_FORMAT_GAMES           = 1 << 0;
     const unsigned int LIST_FORMAT_DETAILS_TEXT    = 1 << 1;
     const unsigned int LIST_FORMAT_DETAILS_JSON    = 1 << 2;
     const unsigned int LIST_FORMAT_TAGS            = 1 << 3;
     const unsigned int LIST_FORMAT_TRANSFORMATIONS = 1 << 4;
     const unsigned int LIST_FORMAT_USERDATA        = 1 << 5;
+    const unsigned int LIST_FORMAT_WISHLIST        = 1 << 6;
 
     const std::vector<optionsStruct> LIST_FORMAT =
     {
@@ -132,7 +117,8 @@ namespace GlobalConstants
         { LIST_FORMAT_DETAILS_JSON, "json",    "JSON",    "j|json"    },
         { LIST_FORMAT_TAGS,         "tags",    "Tags",    "t|tags"    },
         { LIST_FORMAT_TRANSFORMATIONS, "transform", "Transformations", "tr|transform|transformations" },
-        { LIST_FORMAT_USERDATA,     "userdata", "User data", "ud|userdata" }
+        { LIST_FORMAT_USERDATA,     "userdata", "User data", "ud|userdata" },
+        { LIST_FORMAT_WISHLIST,     "wishlist", "Wishlist", "w|wishlist" }
     };
 
     const unsigned int GFTYPE_BASE_INSTALLER = 1 << 0;
@@ -143,14 +129,19 @@ namespace GlobalConstants
     const unsigned int GFTYPE_DLC_EXTRA      = 1 << 5;
     const unsigned int GFTYPE_DLC_PATCH      = 1 << 6;
     const unsigned int GFTYPE_DLC_LANGPACK   = 1 << 7;
+    const unsigned int GFTYPE_CUSTOM_BASE    = 1 << 8;
+    const unsigned int GFTYPE_CUSTOM_DLC     = 1 << 9;
     const unsigned int GFTYPE_DLC = GFTYPE_DLC_INSTALLER | GFTYPE_DLC_EXTRA |
-                                    GFTYPE_DLC_PATCH | GFTYPE_DLC_LANGPACK;
+                                    GFTYPE_DLC_PATCH | GFTYPE_DLC_LANGPACK |
+                                    GFTYPE_CUSTOM_DLC;
     const unsigned int GFTYPE_BASE = GFTYPE_BASE_INSTALLER | GFTYPE_BASE_EXTRA |
-                                     GFTYPE_BASE_PATCH | GFTYPE_BASE_LANGPACK;
+                                     GFTYPE_BASE_PATCH | GFTYPE_BASE_LANGPACK |
+                                     GFTYPE_CUSTOM_BASE;
     const unsigned int GFTYPE_INSTALLER = GFTYPE_BASE_INSTALLER | GFTYPE_DLC_INSTALLER;
     const unsigned int GFTYPE_EXTRA     = GFTYPE_BASE_EXTRA | GFTYPE_DLC_EXTRA;
     const unsigned int GFTYPE_PATCH     = GFTYPE_BASE_PATCH | GFTYPE_DLC_PATCH;
     const unsigned int GFTYPE_LANGPACK  = GFTYPE_BASE_LANGPACK | GFTYPE_DLC_LANGPACK;
+    const unsigned int GFTYPE_CUSTOM    = GFTYPE_CUSTOM_BASE | GFTYPE_CUSTOM_DLC;
 
     const std::vector<GlobalConstants::optionsStruct> INCLUDE_OPTIONS =
     {

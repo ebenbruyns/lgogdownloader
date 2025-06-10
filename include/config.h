@@ -36,7 +36,7 @@ struct DownloadConfig
     unsigned int iGalaxyCDN;
     std::vector<unsigned int> vPlatformPriority;
     std::vector<unsigned int> vLanguagePriority;
-    std::vector<unsigned int> vGalaxyCDNPriority;
+    std::vector<std::string> vGalaxyCDNPriority;
     std::vector<std::string> vTags;
     unsigned int iInclude;
     unsigned int iGalaxyPlatform;
@@ -57,6 +57,7 @@ struct DownloadConfig
     bool bDuplicateHandler;
     bool bGalaxyDependencies;
     bool bDeleteOrphans;
+    bool bGalaxyLowercasePath;
 };
 
 struct gameSpecificConfig
@@ -222,6 +223,7 @@ struct CurlConfig
     curl_off_t iDownloadRate;
     long int iLowSpeedTimeout;
     long int iLowSpeedTimeoutRate;
+    std::string sInterface;
 };
 
 class Config
@@ -232,6 +234,7 @@ class Config
 
         // Booleans
         bool bLogin;
+        bool bForceBrowserLogin;
         bool bSaveConfig;
         bool bResetConfig;
 
@@ -240,7 +243,6 @@ class Config
         bool bUpdated;
         bool bNew;
         bool bCheckStatus;
-        bool bShowWishlist;
         bool bNotifications;
         bool bIncludeHiddenProducts;
         bool bSizeOnly;
@@ -256,6 +258,7 @@ class Config
 #endif
         bool bUseFastCheck;
         bool bTrustAPIForExtras;
+        bool bGalaxyListCDNs;
 
         // Cache
         bool bUseCache;
@@ -306,14 +309,11 @@ class Config
         // Lists
         Blacklist blacklist;
         Blacklist ignorelist;
-        Blacklist gamehasdlc;
 
         // Cloud save options
         std::vector<std::string> cloudWhiteList;
         std::vector<std::string> cloudBlackList;
         bool bCloudForce;
-
-        std::string sGameHasDLCList;
 
         // Integers
         int iRetries;

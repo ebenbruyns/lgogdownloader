@@ -1,11 +1,7 @@
-cmake_minimum_required(VERSION 3.5.0 FATAL_ERROR)
-project (lgogdownloader LANGUAGES C CXX VERSION 3.12)
+cmake_minimum_required(VERSION 3.18.0 FATAL_ERROR)
+project (lgogdownloader LANGUAGES C CXX VERSION 3.17)
 
 set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} "${CMAKE_SOURCE_DIR}/cmake/")
-
-# Disable search for boost-cmake
-# Fixes building with Boost >= 1.70.0
-set(Boost_NO_BOOST_CMAKE ON)
 
 option(USE_QT_GUI "Build with Qt GUI login support" OFF)
 if(USE_QT_GUI)
@@ -15,6 +11,7 @@ if(USE_QT_GUI)
 endif(USE_QT_GUI)
 
 find_package(Boost
+  CONFIG
   REQUIRED
   system
   filesystem

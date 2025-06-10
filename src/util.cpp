@@ -17,49 +17,6 @@
 #include <tidy.h>
 #include <tidybuffio.h>
 
-/*
-    Create filepath from specified directory and path
-    Remove the leading slash from path if needed
-    Use gamename as base directory if specified
-*/
-std::string Util::makeFilepath(const std::string& directory, const std::string& path, const std::string& gamename, std::string subdirectory, const unsigned int& platformId, const std::string& dlcname)
-{
-    std::string dir = directory + makeRelativeFilepath(path, gamename, subdirectory);
-    Util::filepathReplaceReservedStrings(dir, gamename, platformId, dlcname);
-    return dir;
-}
-
-/* Create filepath relative to download base directory specified in config.
- */
-std::string Util::makeRelativeFilepath(const std::string& path, const std::string& gamename, std::string subdirectory)
-{
-    std::string filepath;
-
-    if (gamename.empty())
-    {
-        if (path.at(0)=='/')
-        {
-            std::string tmp_path = path.substr(1,path.length());
-            filepath = tmp_path;
-        }
-        else
-        {
-            filepath = path;
-        }
-    }
-    else
-    {
-        std::string filename = path.substr(path.find_last_of("/")+1, path.length());
-        if (!subdirectory.empty())
-        {
-            subdirectory = "/" + subdirectory;
-        }
-        filepath = subdirectory + "/" + filename;
-    }
-
-    return filepath;
-}
-
 std::string Util::getFileHash(const std::string& filename, unsigned hash_id)
 {
     unsigned char digest[rhash_get_digest_size(hash_id)];
@@ -414,70 +371,10 @@ int Util::replaceAllString(std::string& str, const std::string& to_replace, cons
 
     do {
         str.replace(str.begin()+pos, str.begin()+pos+to_replace.length(), replace_with);
-
-        pos = str.find(to_replace, pos + to_replace.length());
+        pos = str.find(to_replace);
     } while(pos != std::string::npos);
 
     return 1;
-}
-
-void Util::filepathReplaceReservedStrings(std::string& str, const std::string& gamename, const unsigned int& platformId, const std::string& dlcname)
-{
-    std::string platform;
-    for (unsigned int i = 0; i < GlobalConstants::PLATFORMS.size(); ++i)
-    {
-        if ((platformId & GlobalConstants::PLATFORMS[i].id) == GlobalConstants::PLATFORMS[i].id)
-        {
-            platform = boost::algorithm::to_lower_copy(GlobalConstants::PLATFORMS[i].str);
-            break;
-        }
-    }
-    if (platform.empty())
-    {
-        if (str.find("%gamename%/%platform%") != std::string::npos)
-            platform = "";
-        else
-            platform = "no_platform";
-    }
-
-    // Don't save certain files in "no_platform" folder
-    if (
-           str.rfind("/icon.png") != std::string::npos
-        || str.rfind("/logo.jpg") != std::string::npos
-        || str.rfind("/product.json") != std::string::npos
-    )
-        platform = "";
-
-    std::string gamename_firstletter;
-    if (!gamename.empty())
-    {
-        if (std::isdigit(gamename.front()))
-            gamename_firstletter = "0";
-        else
-            gamename_firstletter = gamename.front();
-    }
-
-    if (str.find("%gamename_transformed%") != std::string::npos || str.find("%gamename_transformed_firstletter%") != std::string::npos)
-    {
-        std::string gamename_transformed = transformGamename(gamename);
-        std::string gamename_transformed_firstletter;
-        if (!gamename_transformed.empty())
-        {
-            if (std::isdigit(gamename_transformed.front()))
-                gamename_transformed_firstletter = "0";
-            else
-                gamename_transformed_firstletter = gamename_transformed.front();
-        }
-
-        while (Util::replaceString(str, "%gamename_transformed%", gamename_transformed));
-        while (Util::replaceString(str, "%gamename_transformed_firstletter%", gamename_transformed_firstletter));
-    }
-
-    while (Util::replaceString(str, "%gamename_firstletter%", gamename_firstletter));
-    while (Util::replaceString(str, "%gamename%", gamename));
-    while (Util::replaceString(str, "%dlcname%", dlcname));
-    while (Util::replaceString(str, "%platform%", platform));
-    while (Util::replaceString(str, "//", "/")); // Replace any double slashes with single slash
 }
 
 void Util::setFilePermissions(const boost::filesystem::path& path, const boost::filesystem::perms& permissions)
@@ -541,6 +438,8 @@ std::vector<std::string> Util::getDLCNamesFromJSON(const Json::Value &root)
     {
         std::string gamename;
         std::string url_prefix = "/downloads/";
+        if (urls[i].find(url_prefix) == std::string::npos)
+            continue;
 
         gamename.assign(urls[i].begin()+urls[i].find(url_prefix)+url_prefix.length(), urls[i].begin()+urls[i].find_last_of("/"));
         bool bDuplicate = false;
@@ -817,12 +716,26 @@ void Util::CurlHandleSetDefaultOptions(CURL* curlhandle, const CurlConfig& conf)
 
     if (!conf.sCACertPath.empty())
         curl_easy_setopt(curlhandle, CURLOPT_CAINFO, conf.sCACertPath.c_str());
+
+    if (!conf.sInterface.empty())
+    {
+        curl_easy_setopt(curlhandle, CURLOPT_DNS_INTERFACE, conf.sInterface.c_str());
+        curl_easy_setopt(curlhandle, CURLOPT_INTERFACE, conf.sInterface.c_str());
+    }
 }
 
 std::string Util::CurlHandleGetInfoString(CURL* curlhandle, CURLINFO info)
 {
     char* str;
-    return (curl_easy_getinfo(curlhandle, info, &str) == CURLE_OK) ? str : "";
+    std::string info_string;
+
+    if (curl_easy_getinfo(curlhandle, info, &str) == CURLE_OK)
+    {
+        if (str)
+            info_string = std::string(str);
+    }
+
+    return info_string;
 }
 
 CURLcode Util::CurlGetResponse(const std::string& url, std::string& response, int max_retries)
@@ -1012,22 +925,31 @@ std::string Util::transformGamename(const std::string& gamename)
 std::string Util::htmlToXhtml(const std::string& html)
 {
     std::string xhtml;
-    TidyBuffer buffer = {0, 0, 0, 0, 0};
+    TidyBuffer buffer;
     int rc = -1;
     TidyDoc doc = tidyCreate();
+    tidyBufInit(&buffer);
 
     tidyOptSetBool(doc, TidyXhtmlOut, yes);
     tidyOptSetBool(doc, TidyForceOutput, yes);
+    tidyOptSetBool(doc, TidyShowInfo, no);
+    tidyOptSetBool(doc, TidyShowWarnings, no);
     tidyOptSetInt(doc, TidyWrapLen, 0);
-    tidyOptSetInt(doc, TidyShowInfo, 0);
-    tidyOptSetInt(doc, TidyShowWarnings, 0);
     rc = tidyParseString(doc, html.c_str());
     if ( rc >= 0 )
         rc = tidyCleanAndRepair(doc);
     if ( rc >= 0 )
         rc = tidySaveBuffer(doc, &buffer);
 
-    xhtml = std::string((char*)buffer.bp, buffer.size);
+    if (rc >= 0)
+    {
+        if (buffer.size > 0)
+            xhtml = std::string((char*)buffer.bp, buffer.size);
+    }
+    else
+    {
+        std::cerr << "Severe error occured: " << std::string(strerror(rc)) << std::endl;
+    }
 
     tidyBufFree(&buffer);
     tidyRelease(doc);
