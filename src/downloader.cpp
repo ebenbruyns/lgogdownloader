@@ -3454,7 +3454,8 @@ template <typename T> void Downloader::printProgress(const ThreadSafeQueue<T>& d
     while (dl_status != DLSTATUS_FINISHED)
     {
         dl_status = DLSTATUS_NOTSTARTED;
-
+        long dl_remaining = 0;
+        long dl_size = 0;
         // Print progress information once per 100ms
         std::this_thread::sleep_for(std::chrono::milliseconds(Globals::globalConfig.iProgressInterval));
         std::cout << "\033[J\r" << std::flush; // Clear screen from the current line down to the bottom of the screen
@@ -3518,7 +3519,7 @@ template <typename T> void Downloader::printProgress(const ThreadSafeQueue<T>& d
                 progress_info.rate /= 1024;
                 rate_unit = "kB/s";
             }
-
+            dl_remaining += progress_info.dltotal - progress_info.dlnow;
             std::string progress_status_text = Util::formattedString(" %0.2f/%0.2fMB @ %0.2f%s ETA: %s", static_cast<double>(progress_info.dlnow)/1024/1024, static_cast<double>(progress_info.dltotal)/1024/1024, progress_info.rate, rate_unit.c_str(), etastring.c_str());
             int status_text_length = progress_status_text.length() + 1;
 
@@ -3543,7 +3544,7 @@ template <typename T> void Downloader::printProgress(const ThreadSafeQueue<T>& d
         {
             unsigned long long total_remaining = iTotalRemainingBytes.load();
             std::string total_eta_str;
-            if (total_remaining > 0)
+            if (total_remaining >= 0)
             {
                 bptime::time_duration eta(bptime::seconds((long)(total_remaining / total_rate)));
                 eta += eta_total_seconds;
@@ -3564,7 +3565,7 @@ template <typename T> void Downloader::printProgress(const ThreadSafeQueue<T>& d
                             break;
                     }
                 }
-
+                dl_remaining += total_remaining;
                 total_eta_str = Util::formattedString(" (%0.2f%s) ETA: %s", total_remaining_double, total_remaining_unit.c_str(), eta_str.c_str());
             }
 
@@ -3591,7 +3592,7 @@ template <typename T> void Downloader::printProgress(const ThreadSafeQueue<T>& d
 
             vProgressText.push_back(ss.str());
         }
-
+        std::cout << "Bytes left: " <<  dl_remaining  << std::endl;
         // Print progress info
         for (unsigned int i = 0; i < vProgressText.size(); ++i)
         {
@@ -3603,7 +3604,12 @@ template <typename T> void Downloader::printProgress(const ThreadSafeQueue<T>& d
         {
             std::cout << "\033[" << vProgressText.size() << "A\r" << std::flush;
         }
+        else 
+        {
+            std::cout << "INSTALL FINISHED" << std::endl << std::flush;
+        }
     }
+    
 }
 
 void Downloader::getGameDetailsThread(Config config, const unsigned int& tid)
@@ -4073,6 +4079,7 @@ void Downloader::galaxyInstallGameById(const std::string& product_id, int build_
     std::cout << game_title << std::endl;
     std::cout << "Files: " << items.size() << std::endl;
     std::cout << "Total size installed: " << Util::makeSizeString(totalSize) << std::endl;
+    std::cout << "Download Size: " << iTotalRemainingBytes.load() << std::endl;
 
     if (Globals::globalConfig.dlConf.bFreeSpaceCheck)
     {
