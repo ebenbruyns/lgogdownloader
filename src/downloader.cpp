@@ -321,8 +321,7 @@ int Downloader::login()
         }
         else
         {
-            std::cerr << "HTTP: Login failed" << std::endl;
-            return 0;
+            std::cerr << "HTTP: Login failed (Galaxy auth is sufficient)" << std::endl;
         }
     }
 
