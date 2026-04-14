@@ -85,7 +85,7 @@ void GuiLogin::Login()
 void GuiLogin::Login(const std::string& username, const std::string& password)
 {
     QByteArray redirect_uri = QUrl::toPercentEncoding(QString::fromStdString(Globals::galaxyConf.getRedirectUri()));
-    std::string auth_url = "https://auth.gog.com/auth?client_id=" + Globals::galaxyConf.getClientId() + "&redirect_uri=" + redirect_uri.toStdString() + "&response_type=code";
+    // layout=client2 tells GOG's auth service to serve the web-compatible
     std::string auth_url = "https://auth.gog.com/auth?client_id=" + Globals::galaxyConf.getClientId() + "&redirect_uri=" + redirect_uri.toStdString() + "&response_type=code&layout=client2";
     QUrl url = QString::fromStdString(auth_url);
     this->login_username = username;
